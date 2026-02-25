@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from .models import Train
 from .serializers import TrainSerializer
+from accounts.permissions import IsAdminRole
 
 import time
 from datetime import datetime, timezone
@@ -13,57 +14,45 @@ from analytics.mongo import api_logs_collection
 
 # Create Train (Admin Only)
 class CreateTrainView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
 
     def post(self, request):
-        if request.user.role != 1:
-            return Response(
-                {"error": "Only admin can create train"},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
         serializer = TrainSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=201)
-
-        return Response(serializer.errors, status=400)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 # Update Train (Admin Only)
 class UpdateTrainView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminRole]
 
     def put(self, request, pk):
-        if request.user.role != 1:
-            return Response(
-                {"error": "Only admin can update train"},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
         try:
             train = Train.objects.get(pk=pk)
         except Train.DoesNotExist:
-            return Response({"error": "Train not found"}, status=404)
+            return Response(
+                {"error": "Train not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
         serializer = TrainSerializer(train, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-
-        return Response(serializer.errors, status=400)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# View All Trains (Any Logged User)
+# View All Trains (Logged Users)
 class ListTrainView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         trains = Train.objects.all()
         serializer = TrainSerializer(trains, many=True)
-        return Response(serializer.data)
-    
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
+
+# Search Train + MongoDB Logging
 class SearchTrainView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -77,7 +66,7 @@ class SearchTrainView(APIView):
         if not source or not destination:
             return Response(
                 {"error": "source and destination are required"},
-                status=400
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         trains = Train.objects.filter(
@@ -93,7 +82,7 @@ class SearchTrainView(APIView):
             except ValueError:
                 return Response(
                     {"error": "Invalid date format. Use YYYY-MM-DD"},
-                    status=400
+                    status=status.HTTP_400_BAD_REQUEST
                 )
 
         serializer = TrainSerializer(trains, many=True)
@@ -102,7 +91,7 @@ class SearchTrainView(APIView):
         end_time = time.time()
         execution_time = round((end_time - start_time) * 1000, 2)
 
-        # 🔥 Log to MongoDB
+        # Log to MongoDB
         api_logs_collection.insert_one({
             "endpoint": "/api/trains/search/",
             "user_id": request.user.id,
@@ -115,4 +104,4 @@ class SearchTrainView(APIView):
             "timestamp": datetime.now(timezone.utc)
         })
 
-        return Response(response_data)
+        return Response(response_data, status=status.HTTP_200_OK)
